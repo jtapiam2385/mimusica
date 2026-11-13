@@ -194,9 +194,9 @@ const I={menu:'M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z',search:'M15.5 14h-
 const ic=(n,st='')=>`<svg class="i" viewBox="0 0 24 24" ${st?`style="${st}"`:''}><path d="${I[n]}"/></svg>`;
 
 /* ====================== estado ====================== */
-const DEF={clientId:'',musicPath:'/Mi Plex center/Mi música',eps:false,live:true,comp:false,other:false,ost:true,newDays:180,checkDays:7};
+const DEF={clientId:'236abe39-ce20-4a3c-a561-5b44b73757ff',musicPath:'/Mi Plex center/Mi música',eps:false,live:true,comp:false,other:false,ost:true,newDays:180,checkDays:7};
 const S={settings:Object.assign({},DEF,LS.get('settings',{})),items:null,rootId:null,lib:null,tags:{},mb:{},ignored:LS.get('ignored',{}),playlists:LS.get('playlists',[]),demo:false,scan:null,tagsBroken:false,albumSort:LS.get('albumSort','artist'),alertTab:'new'};
-const saveSettings=()=>LS.set('settings',S.settings);
+if(!S.settings.clientId)S.settings.clientId=DEF.clientId;const saveSettings=()=>LS.set('settings',S.settings);
 const AUDIO_RE=/\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|mp4|wma)$/i;
 
 /* ====================== login Microsoft (PKCE) ====================== */
