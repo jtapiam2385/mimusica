@@ -358,7 +358,7 @@ function buildLib(){
     tracks[id]={id,t:pt.t,n:pt.n,d:disc,a:albumId,s:it[3],x:(it[0].match(/\.([^.]+)$/)||[])[1]};
     A.tr.push(id);A.sz+=it[3];
   }
-  for(const k in artists)artists[k].al.sort((a,b)=>(albums[a].y||9999)-(albums[b].y||9999)||albums[a].t.localeCompare(albums[b].t));
+  addEmptyAlbums(items,root,chain,albums,artists);for(const k in artists)artists[k].al.sort((a,b)=>(albums[a].y||9999)-(albums[b].y||9999)||albums[a].t.localeCompare(albums[b].t));
   for(const id in albums)sortAlbumTracks(albums[id],tracks);
   const coll=new Intl.Collator('es',{sensitivity:'base',numeric:true});
   const albumList=Object.values(albums);
@@ -367,7 +367,7 @@ function buildLib(){
   S.lib={albums,artists,tracks,children,albumList,artistList,trackList,coll};
   sortAlbums();
 }
-function sortAlbumTracks(A,tracks){
+function addEmptyAlbums(items,root,chain,albums,artists){const has={};for(const id in items){const it=items[id];if(it[2]||!AUDIO_RE.test(it[0]))continue;let c=it[1];while(c&&c!==root&&!has[c]){has[c]=1;c=items[c]&&items[c][1]}}const AP=/^\s*\d{4}\s*[-–—._]\s*\S/;for(const id in items){const it=items[id];if(!it[2]||has[id]||albums[id]||!AP.test(it[0]))continue;const p=items[it[1]];if(p&&AP.test(p[0]))continue;const ch=chain(id);if(!ch||ch.length<2)continue;const ai=ch.length-1;let ax=1;while(ai>ax+1&&/^(discograf[ií]as? varias|varios|various( artists)?|compilados?)$/i.test(items[ch[ax]][0].trim()))ax++;const an=ai>ax?items[ch[ax]][0]:null;const pa=parseAlbum(it[0]);albums[id]={id,t:pa.t,y:pa.y,ar:an?akey(an):null,arn:an,cat:items[ch[0]][0],tr:[],sz:0,empty:true};if(an){const k=akey(an);const R=artists[k]||(artists[k]={k,name:an,al:[],cats:[]});R.al.push(id);if(!R.cats.includes(items[ch[0]][0]))R.cats.push(items[ch[0]][0])}}}function sortAlbumTracks(A,tracks){
   tracks=tracks||S.lib.tracks;
   const key=id=>{const t=tracks[id],g=S.tags[id]||{};return[(g.d||t.d||1),(g.n||t.n||999)]};
   A.tr.sort((a,b)=>{const ka=key(a),kb=key(b);return ka[0]-kb[0]||ka[1]-kb[1]||tracks[a].t.localeCompare(tracks[b].t)});
@@ -518,11 +518,11 @@ const audio=new Audio();audio.preload='auto';
 const P={q:LS.get('np.q',[]),i:LS.get('np.i',-1),shuf:LS.get('np.shuf',false),rep:LS.get('np.rep',0),orig:null,from:LS.get('np.from',''),tok:0,
   cur(){return this.q[this.i]},
   save(){LS.set('np.q',this.q.slice(0,5000));LS.set('np.i',this.i);LS.set('np.shuf',this.shuf);LS.set('np.rep',this.rep);LS.set('np.from',this.from)},
-  play(list,idx,opts={}){
+  play(list,idx,opts={}){this.amode=!!opts.amode;
     if(!list.length)return;
     this.q=list.slice();this.orig=null;this.from=opts.from||'';
     if(opts.shuffle){this.shuf=true;shuffleArr(this.q);idx=0}
-    else if(this.shuf){const first=this.q.splice(idx,1)[0];this.orig=list.slice();shuffleArr(this.q);this.q.unshift(first);idx=0}
+    else if(this.shuf&&!opts.amode){const first=this.q.splice(idx,1)[0];this.orig=list.slice();shuffleArr(this.q);this.q.unshift(first);idx=0}
     this.load(idx,true);
   },
   async load(i,autoplay=true,at=0){
@@ -541,7 +541,7 @@ const P={q:LS.get('np.q',[]),i:LS.get('np.i',-1),shuf:LS.get('np.shuf',false),re
     }catch(e){if(my!==this.tok)return;if(e instanceof AuthErr){showBanner();return}toast('No se pudo reproducir: '+e.message);}
   },
   toggle(){if(!this.cur())return;if(!audio.src){this.load(this.i,true,LS.get('np.t',0));return}audio.paused?audio.play():audio.pause()},
-  next(auto){if(this.rep===2&&auto){audio.currentTime=0;audio.play();return}
+  next(auto){if(this.rep===2&&auto){audio.currentTime=0;audio.play();return}if(this.amode&&this.i>=this.q.length-1){playRandomAlbum();return}
     if(this.i<this.q.length-1)this.load(this.i+1);else if(this.rep===1)this.load(0);else if(auto){audio.pause();audio.currentTime=0}},
   prev(){if(audio.currentTime>4){audio.currentTime=0;return}if(this.i>0)this.load(this.i-1);else audio.currentTime=0},
   toggleShuffle(){
@@ -554,7 +554,7 @@ const P={q:LS.get('np.q',[]),i:LS.get('np.i',-1),shuf:LS.get('np.shuf',false),re
   playNext(ids){if(!this.cur()){this.play(ids,0);return}this.q.splice(this.i+1,0,...ids);this.save();toast('Se reproducirá a continuación',1500)},
   enqueue(ids){if(!this.cur()){this.play(ids,0);return}this.q.push(...ids);this.save();toast('Añadido a la cola',1500)}
 };
-function shuffleArr(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+async function playRandomAlbum(){const L=S.lib.albumList.filter(a=>a.tr.length&&(a.ar||a.arn||a.id)!==P.lastAr);if(!L.length)return;const A=L[Math.floor(Math.random()*L.length)];P.lastAr=A.ar||A.arn||A.id;try{await loadAlbumTags(A)}catch(e){}P.play(A.tr,0,{amode:true,from:'Álbumes al azar · '+A.t})}function shuffleArr(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
 audio.addEventListener('ended',()=>P.next(true));
 audio.addEventListener('play',updatePlayButtons);audio.addEventListener('pause',()=>{updatePlayButtons();LS.set('np.t',audio.currentTime)});
 audio.addEventListener('error',async()=>{
@@ -690,7 +690,7 @@ function computeAlerts(){
     const albums=R.al.map(id=>S.lib.albums[id]);
     for(const rg of m.rgs){
       if(!typeOK(rg)||S.ignored[rg.id]||!rg.d)continue;
-      if(haveLocal(rg,albums))continue;
+      if(haveLocal(rg,albums.filter(a=>a.tr.length)))continue;rg._p=haveLocal(rg,albums.filter(a=>!a.tr.length));
       if(rg.d>=since)res.news.push({R,rg,fut:rg.d>today});
       else{(res.miss[R.k]||(res.miss[R.k]={R,list:[]})).list.push(rg);res.missN++}
     }
@@ -724,7 +724,7 @@ function moreChunk(){
   chunk.pos=end;w.insertAdjacentHTML('beforeend',html.join(''));hydrateCovers(w);
   if(P.cur())w.querySelectorAll(`.row[data-tid="${P.cur()}"]`).forEach(r=>r.classList.add('playing'));
 }
-const albumTile=A=>`<button class="tile" data-go="#/album/${A.id}">${coverHTML(A)}<div class="tt">${esc(A.t)}</div><div class="ts">${esc(albumArtist(A))}${A.y?' · '+A.y:''}</div></button>`;
+const albumTile=A=>`<button class="tile"${A.empty?' style="opacity:.5"':''} data-go="#/album/${A.id}">${coverHTML(A)}<div class="tt">${esc(A.t)}</div><div class="ts">${A.empty?'<span class="tag fut" style="margin:0 4px 0 0">Pendiente</span>':''}${esc(albumArtist(A))}${A.y?' · '+A.y:''}</div></button>`;
 function trackRow(id,i,listKey,opts={}){
   const t=S.lib.tracks[id];if(!t)return'';const A=S.lib.albums[t.a];const g=S.tags[id]||{};
   const left=opts.num?`<span class="num">${g.n||t.n||(i+1)}</span>`:opts.cover?coverHTML(A,'sq'):'';
@@ -752,7 +752,7 @@ const VIEWS={
   albums(){
     setTitle('Álbumes');
     const L=S.lib;
-    return `<div class="tabs">${[['artist','Por artista'],['year','Por año'],['title','A–Z']].map(([k,n])=>`<button class="chip${S.albumSort===k?' on':''}" data-sort="${k}">${n}</button>`).join('')}<span class="chip" style="background:none;color:var(--tx2)">${L.albumList.length.toLocaleString('es-CL')} álbumes</span></div>`+chunked(L.albumList,albumTile,'grid',60);
+    return `<div class="tabs">${[['artist','Por artista'],['year','Por año'],['title','A–Z']].map(([k,n])=>`<button class="chip${S.albumSort===k?' on':''}" data-sort="${k}">${n}</button>`).join('')}<button class="chip" data-act="ashuf">${ic('shuffle','width:16px;height:16px;vertical-align:-3px')} Álbumes al azar</button><span class="chip" style="background:none;color:var(--tx2)">${L.albumList.length.toLocaleString('es-CL')} álbumes</span></div>`+chunked(L.albumList,albumTile,'grid',60);
   },
   artists(){
     setTitle('Artistas');
@@ -764,7 +764,7 @@ const VIEWS={
     const m=S.mb[k]||{};const albums=R.al.map(id=>S.lib.albums[id]);
     let mb='';
     if(S.demo||m.rgs||m.nomatch||m.skip){
-      const miss=(m.rgs||[]).filter(rg=>typeOK(rg)&&rg.d&&!S.ignored[rg.id]&&!haveLocal(rg,albums));
+      const miss=(m.rgs||[]).filter(rg=>typeOK(rg)&&rg.d&&!S.ignored[rg.id]&&!haveLocal(rg,albums.filter(a=>a.tr.length))).map(rg=>(rg._p=haveLocal(rg,albums.filter(a=>!a.tr.length)),rg));
       mb=`<div class="card"><h3>Discografía en MusicBrainz</h3>`+
         (m.skip?`<div class="muted small">Este artista no se revisa.</div><div class="btns" style="padding:8px 0 0"><button class="btn sm" data-act="unskip" data-k="${esc(k)}">Volver a revisar</button></div>`:
          m.nomatch?`<div class="muted small">No encontré a "${esc(R.name)}" con seguridad.</div><div class="btns" style="padding:8px 0 0"><button class="btn sm pri" data-act="fixartist" data-k="${esc(k)}">Elegir artista</button><button class="btn sm" data-act="skip" data-k="${esc(k)}">No revisar</button></div>`:
@@ -776,7 +776,7 @@ const VIEWS={
   },
   album(id){
     const A=S.lib.albums[id];if(!A)return notFound();
-    setTitle(A.t,true);loadAlbumTags(A);
+    setTitle(A.t,true);if(!A.tr.length)return `<div class="hero">${coverHTML(A)}<div style="min-width:0"><h1>${esc(A.t)}</h1><div class="muted">${esc(albumArtist(A))}</div><div class="ts">${A.y||''}</div></div></div><div class="card"><h3>Pendiente de cargar</h3><div class="small muted">Esta carpeta existe en tu OneDrive pero todavía no tiene canciones.</div></div>`;loadAlbumTags(A);
     const discs=new Set(A.tr.map(t=>(S.tags[t]&&S.tags[t].d)||S.lib.tracks[t].d));
     let lastD=null;
     const rows=A.tr.map((tid,i)=>{const d=(S.tags[tid]&&S.tags[tid].d)||S.lib.tracks[tid].d;let hd='';if(discs.size>1&&d!==lastD){hd=`<div class="sec">Disco ${d}</div>`;lastD=d}return hd+trackRow(tid,i,'album:'+id,{num:true})}).join('');
@@ -863,7 +863,7 @@ const VIEWS={
       <div class="pad ts">¿Quieres verla antes? <a href="?demo=1">Abrir modo demo</a></div>`;
   }
 };
-function missRow(rg,k){return `<div class="row" style="padding-left:16px"><span class="mid"><div class="tt2">${esc(rg.t)}${rg.pt==='EP'?'<span class="tag">EP</span>':''}${(rg.st||[]).map(s=>`<span class="tag">${esc(stName(s))}</span>`).join('')}</div><div class="ts">${fmtDate(rg.d)}</div></span><button class="more" data-rgmenu="${rg.id}" data-k="${esc(k||'')}">${ic('more')}</button></div>`}
+function missRow(rg,k){return `<div class="row" style="padding-left:16px"><span class="mid"><div class="tt2">${esc(rg.t)}${rg._p?'<span class="tag fut">Carpeta creada</span>':''}${rg.pt==='EP'?'<span class="tag">EP</span>':''}${(rg.st||[]).map(s=>`<span class="tag">${esc(stName(s))}</span>`).join('')}</div><div class="ts">${fmtDate(rg.d)}</div></span><button class="more" data-rgmenu="${rg.id}" data-k="${esc(k||'')}">${ic('more')}</button></div>`}
 const stName=s=>({Live:'En vivo',Compilation:'Recopilatorio',Soundtrack:'Banda sonora',Remix:'Remix'}[s]||s);
 function fmtDate(d){if(!d)return'';const p=d.split('-');const M=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];return p.length===3?`${+p[2]} ${M[+p[1]-1]} ${p[0]}`:p.length===2?`${M[+p[1]-1]} ${p[0]}`:p[0]}
 function notFound(){setTitle('Mi Música');return '<div class="empty">No encontrado.</div>'}
@@ -988,7 +988,7 @@ document.addEventListener('click',e=>{
   switch(a.dataset.act){
     case'rescan':closeAll();if(S.demo){toast('Modo demo');break}scanLibrary(false);break;
     case'fullscan':if(confirm('¿Leer toda la biblioteca desde cero?'))scanLibrary(true);break;
-    case'mbrun':if(S.demo){toast('En modo demo no se consulta MusicBrainz');break}MB.run(true);setTimeout(()=>renderView(true),100);break;
+    case'ashuf':playRandomAlbum();break;case'mbrun':if(S.demo){toast('En modo demo no se consulta MusicBrainz');break}MB.run(true);setTimeout(()=>renderView(true),100);break;
     case'checkone':toast('Revisando…',1200);MB.checkArtist(k).then(()=>{saveMB();updateBadge();renderView(true)}).catch(err=>toast(err.message));break;
     case'notif':Notification.requestPermission().then(p=>{toast(p==='granted'?'Avisos activados':'Avisos no permitidos');renderView(true)});break;
     case'fixartist':fixArtist(k);break;
