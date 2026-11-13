@@ -669,12 +669,12 @@ function typeOK(rg){
   return true;
 }
 function haveLocal(rg,albums){
-  const t=normTitle(rg.t);if(!t)return true;
+  const t=normTitle(rg.t);if(!t)return albums.some(A=>A.t.trim()===String(rg.t).trim());
   const y=rg.d?+rg.d.slice(0,4):null;
   for(const A of albums){
     const a=normTitle(A.t);if(!a)continue;
     if(a===t)return true;
-    if(Math.min(a.length,t.length)>=5&&(a.includes(t)||t.includes(a)))return true;
+    if(Math.min(a.length,t.length)>=5&&Math.min(a.length,t.length)/Math.max(a.length,t.length)>=0.6&&(a.includes(t)||t.includes(a)))return true;
     const d=dice(a,t);if(d>=0.85||(d>=0.7&&y&&A.y&&Math.abs(A.y-y)<=1))return true;
   }
   return false;
