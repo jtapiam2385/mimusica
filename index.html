@@ -194,7 +194,7 @@ const I={menu:'M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z',search:'M15.5 14h-
 const ic=(n,st='')=>`<svg class="i" viewBox="0 0 24 24" ${st?`style="${st}"`:''}><path d="${I[n]}"/></svg>`;
 
 /* ====================== estado ====================== */
-const DEF={clientId:'',musicPath:'/Mi Plex center/Mi música',eps:false,live:false,comp:false,other:false,newDays:180,checkDays:7};
+const DEF={clientId:'',musicPath:'/Mi Plex center/Mi música',eps:false,live:true,comp:false,other:false,ost:true,newDays:180,checkDays:7};
 const S={settings:Object.assign({},DEF,LS.get('settings',{})),items:null,rootId:null,lib:null,tags:{},mb:{},ignored:LS.get('ignored',{}),playlists:LS.get('playlists',[]),demo:false,scan:null,tagsBroken:false,albumSort:LS.get('albumSort','artist'),alertTab:'new'};
 const saveSettings=()=>LS.set('settings',S.settings);
 const AUDIO_RE=/\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|mp4|wma)$/i;
@@ -349,7 +349,7 @@ function buildLib(){
     if(dm&&ch.length>=3){disc=+dm[1];albumId=ch[ch.length-2]}
     const ai=ch.indexOf(albumId);
     const cat=items[ch[0]][0];
-    const artistName=ai>=2?items[ch[1]][0]:null;
+    let ax=1;while(ai>ax+1&&/^(discograf[ií]as? varias|varios|various( artists)?|compilados?)$/i.test(items[ch[ax]][0].trim()))ax++;const artistName=ai>ax?items[ch[ax]][0]:null;
     let A=albums[albumId];
     if(!A){const pa=parseAlbum(items[albumId][0]);
       A=albums[albumId]={id:albumId,t:ai===0?cat:pa.t,y:pa.y,ar:artistName?akey(artistName):null,arn:artistName,cat,tr:[],sz:0};
@@ -619,9 +619,9 @@ const MB={running:false,done:0,total:0,cur:'',last:0,stop:false,
   async rgs(mbid){
     const out=[];let off=0;
     for(let k=0;k<5;k++){
-      const j=await this.fetch(`release-group?artist=${mbid}&type=album|ep&limit=100&offset=${off}`);
+      const j=await this.fetch(`release-group?artist=${mbid}&type=album|ep&inc=artist-credits&limit=100&offset=${off}`);
       const L=j['release-groups']||[];
-      out.push(...L.map(r=>({id:r.id,t:r.title,d:r['first-release-date']||'',pt:r['primary-type']||'',st:r['secondary-types']||[]})));
+      out.push(...L.filter(r=>{const c=r['artist-credit'];return !c||!c.length||(c[0].artist&&c[0].artist.id===mbid)}).map(r=>({id:r.id,t:r.title,d:r['first-release-date']||'',pt:r['primary-type']||'',st:r['secondary-types']||[]})));
       off+=L.length;if(!L.length||off>=(j['release-group-count']||0))break;
     }
     return out;
@@ -665,7 +665,7 @@ function typeOK(rg){
   const st=rg.st||[];
   if(rg.pt==='EP'&&!S.settings.eps)return false;
   if(rg.pt!=='Album'&&rg.pt!=='EP')return false;
-  for(const s of st){if(s==='Live'){if(!S.settings.live)return false}else if(s==='Compilation'){if(!S.settings.comp)return false}else if(!S.settings.other)return false}
+  for(const s of st){if(s==='Live'){if(!S.settings.live)return false}else if(s==='Compilation'){if(!S.settings.comp)return false}else if(s==='Soundtrack'){if(!S.settings.ost)return false}else if(!S.settings.other)return false}
   return true;
 }
 function haveLocal(rg,albums){
@@ -839,7 +839,7 @@ const VIEWS={
       <div class="btns" style="padding:10px 0 0"><button class="btn sm pri" data-act="rescan">${ic('refresh','width:18px;height:18px')} Actualizar</button><button class="btn sm" data-act="fullscan">Leer todo de nuevo</button></div></div>
       <div class="card"><h3>Alertas de discos</h3>
       <div class="small muted">Siempre se consideran los álbumes de estudio. Además incluir:</div>
-      ${sw('eps','EPs')}${sw('live','Discos en vivo')}${sw('comp','Recopilatorios')}${sw('other','Bandas sonoras, remixes y otros')}
+      ${sw('eps','EPs')}${sw('live','Discos en vivo')}${sw('comp','Recopilatorios')}${sw('ost','Bandas sonoras')}${sw('other','Remixes y otros')}
       <div class="field"><div class="lbl">Considerar "nuevo" un disco de los últimos</div><select data-setn="newDays">${[60,90,180,365].map(n=>`<option value="${n}" ${s.newDays==n?'selected':''}>${n} días</option>`).join('')}</select></div>
       <div class="field"><div class="lbl">Revisar novedades cada</div><select data-setn="checkDays">${[1,3,7,14,30].map(n=>`<option value="${n}" ${s.checkDays==n?'selected':''}>${n===1?'1 día':n+' días'}</option>`).join('')}</select></div>
       <div class="btns" style="padding:6px 0 0"><button class="btn sm" data-act="clearign">Restaurar discos ignorados (${Object.keys(S.ignored).length})</button></div></div>
@@ -1071,7 +1071,7 @@ async function init(){
     await Auth.handleRedirect();
     S.rootId=LS.get('rootId',null);
     const [items,tags,mb]=await Promise.all([IDB.get('kv','items'),IDB.get('kv','tags'),IDB.get('kv','mb')]);
-    S.tags=tags||{};S.mb=mb||{};
+    S.tags=tags||{};S.mb=mb||{};if(LS.get('critV',0)<2){for(const k in S.mb)S.mb[k].checked=0;LS.set('critV',2);S.settings.live=true;S.settings.ost=true;S.settings.comp=false;S.settings.eps=false;S.settings.other=false;saveSettings()}
     if(items&&S.rootId){S.items=items;try{buildLib()}catch(e){console.error(e);S.lib=null}}
     if(S.lib)updateBadge();
   }
