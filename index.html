@@ -301,7 +301,7 @@ async function scanLibrary(full){
     buildLib();
     S.scan=null;
     if(S.lib.trackList.length!==before)toast('Biblioteca lista: '+S.lib.trackList.length.toLocaleString('es-CL')+' canciones');
-    renderView(before>=0);
+    if(before<0&&/^#\/(setup)?$|^$/.test(location.hash))location.hash='#/albums';else renderView(before>=0);
     setTimeout(()=>MB.run(false),3000);
   }catch(e){
     S.scan=null;
