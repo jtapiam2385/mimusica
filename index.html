@@ -215,6 +215,7 @@ const Auth={
     const ch=b64u(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));
     const p=new URLSearchParams({client_id:S.settings.clientId,response_type:'code',redirect_uri:redirectUri(),response_mode:'query',scope:SCOPES,code_challenge:ch,code_challenge_method:'S256',state:st});
     if(silent)p.set('prompt','none');
+    S.redirecting=true;
     location.assign(AUTH+'authorize?'+p);
   },
   async handleRedirect(){
@@ -239,11 +240,11 @@ const Auth={
   _ref:null,
   async token(){
     const t=LS.get('tok',null);
-    if(!t)throw new AuthErr();
+    if(!t){autoReauth();throw new AuthErr()}
     if(Date.now()<t.exp)return t.at;
-    if(!t.rt)throw new AuthErr();
+    if(!t.rt){autoReauth();throw new AuthErr()}
     if(!this._ref)this._ref=this.tokenReq({grant_type:'refresh_token',refresh_token:t.rt}).finally(()=>{this._ref=null});
-    try{return (await this._ref).at}catch(e){LS.del('tok');showBanner();throw new AuthErr()}
+    try{return (await this._ref).at}catch(e){LS.del('tok');autoReauth();throw new AuthErr()}
   },
   logged:()=>!!LS.get('tok',null),
   logout(){LS.del('tok')}
@@ -256,7 +257,17 @@ async function gget(url,tries=0){
   if(!r.ok){const e=new Error('OneDrive respondió '+r.status);e.status=r.status;try{const j=await r.json();e.message+=': '+((j.error&&j.error.message)||'')}catch(_){}throw e}
   return r.json();
 }
-function showBanner(msg){if(S.demo)return;$('#bannerTx').textContent=msg||'Tu sesión con Microsoft venció.';$('#banner').classList.add('on')}
+// La sesión de Microsoft para apps web dura 24 h. Cuando vence, se renueva sola
+// pasando por Microsoft sin pedir nada (prompt=none) y se retoma la canción.
+function autoReauth(){
+  if(S.demo||S.redirecting||!S.settings.clientId)return false;
+  const last=LS.get('autoAuthAt',0);
+  if(Date.now()-last<3*60e3){showBanner();return false}
+  LS.set('autoAuthAt',Date.now());
+  try{if(P.cur())LS.set('resumePlay',{i:P.i,t:audio.currentTime||0,play:!audio.paused||P.wantPlay})}catch(e){}
+  Auth.login(true);return true;
+}
+function showBanner(msg){if(S.demo||S.redirecting)return;$('#bannerTx').textContent=msg||'Tu sesión con Microsoft venció.';$('#banner').classList.add('on')}
 $('#bannerBtn').onclick=()=>Auth.login(false);
 
 /* ====================== lectura de la biblioteca ====================== */
@@ -335,6 +346,23 @@ function parseTrack(f){
   return m?{n:+m[1],t:m[2].trim()}:{n:null,t:base.trim()};
 }
 const DISC_RE=/(?:^|[\s\-_(\[])(?:cd|disc|disco|disk)\s*0*(\d{1,2})\s*[\])]?\s*$/i;
+// Carpetas que solo agrupan artistas (se saltan) y carpetas de "Artistas varios":
+// todo lo que está dentro de "Varios" queda como un solo álbum de "Artistas varios",
+// sin repartirlo entre los artistas que colaboran en él.
+const GROUP_RE=/^discograf[ií]as? varias$/i;
+const VA_RE=/^(artistas? varios|varios|various( artists)?|v\.?\s?a\.?|compilados?|compilaciones?)$/i;
+const VA_NAME='Artistas varios';
+function artistOf(items,ch,ai){
+  let ax=1;while(ai>ax&&GROUP_RE.test(items[ch[ax]][0].trim()))ax++;
+  if(ai<=ax)return{name:null};
+  const n=items[ch[ax]][0];
+  if(VA_RE.test(n.trim())){
+    // si el álbum está dentro de una carpeta-colección ("2004 - Sólo Hits/Sólo Hits Vol.1"), hereda su año
+    let y=null;for(let j=ai-1;j>ax&&!y;j--)y=parseAlbum(items[ch[j]][0]).y;
+    return{name:VA_NAME,va:true,y};
+  }
+  return{name:n};
+}
 function buildLib(){
   const items=S.items,root=S.rootId;
   const children={};for(const id in items){const p=items[id][1];(children[p]||(children[p]=[])).push(id)}
@@ -349,11 +377,11 @@ function buildLib(){
     if(dm&&ch.length>=3){disc=+dm[1];albumId=ch[ch.length-2]}
     const ai=ch.indexOf(albumId);
     const cat=items[ch[0]][0];
-    let ax=1;while(ai>ax+1&&/^(discograf[ií]as? varias|varios|various( artists)?|compilados?)$/i.test(items[ch[ax]][0].trim()))ax++;const artistName=ai>ax?items[ch[ax]][0]:null;
+    const who=artistOf(items,ch,ai);const artistName=who.name;
     let A=albums[albumId];
     if(!A){const pa=parseAlbum(items[albumId][0]);
-      A=albums[albumId]={id:albumId,t:ai===0?cat:pa.t,y:pa.y,ar:artistName?akey(artistName):null,arn:artistName,cat,tr:[],sz:0};
-      if(artistName){const k=akey(artistName);const R=artists[k]||(artists[k]={k,name:artistName,al:[],cats:[]});R.al.push(albumId);if(!R.cats.includes(cat))R.cats.push(cat)}}
+      A=albums[albumId]={id:albumId,t:ai===0?cat:pa.t,y:pa.y||who.y,ar:artistName?akey(artistName):null,arn:artistName,va:who.va,cat,tr:[],sz:0};
+      if(artistName){const k=akey(artistName);const R=artists[k]||(artists[k]={k,name:artistName,al:[],cats:[],va:who.va});R.al.push(albumId);if(!R.cats.includes(cat))R.cats.push(cat)}}
     const pt=parseTrack(it[0]);
     tracks[id]={id,t:pt.t,n:pt.n,d:disc,a:albumId,s:it[3],x:(it[0].match(/\.([^.]+)$/)||[])[1]};
     A.tr.push(id);A.sz+=it[3];
@@ -367,7 +395,7 @@ function buildLib(){
   S.lib={albums,artists,tracks,children,albumList,artistList,trackList,coll};
   sortAlbums();
 }
-function addEmptyAlbums(items,root,chain,albums,artists){const has={};for(const id in items){const it=items[id];if(it[2]||!AUDIO_RE.test(it[0]))continue;let c=it[1];while(c&&c!==root&&!has[c]){has[c]=1;c=items[c]&&items[c][1]}}const AP=/^\s*\d{4}\s*[-–—._]\s*\S/;for(const id in items){const it=items[id];if(!it[2]||has[id]||albums[id]||!AP.test(it[0]))continue;const p=items[it[1]];if(p&&AP.test(p[0]))continue;const ch=chain(id);if(!ch||ch.length<2)continue;const ai=ch.length-1;let ax=1;while(ai>ax+1&&/^(discograf[ií]as? varias|varios|various( artists)?|compilados?)$/i.test(items[ch[ax]][0].trim()))ax++;const an=ai>ax?items[ch[ax]][0]:null;const pa=parseAlbum(it[0]);albums[id]={id,t:pa.t,y:pa.y,ar:an?akey(an):null,arn:an,cat:items[ch[0]][0],tr:[],sz:0,empty:true};if(an){const k=akey(an);const R=artists[k]||(artists[k]={k,name:an,al:[],cats:[]});R.al.push(id);if(!R.cats.includes(items[ch[0]][0]))R.cats.push(items[ch[0]][0])}}}function sortAlbumTracks(A,tracks){
+function addEmptyAlbums(items,root,chain,albums,artists){const has={};for(const id in items){const it=items[id];if(it[2]||!AUDIO_RE.test(it[0]))continue;let c=it[1];while(c&&c!==root&&!has[c]){has[c]=1;c=items[c]&&items[c][1]}}const AP=/^\s*\d{4}\s*[-–—._]\s*\S/;for(const id in items){const it=items[id];if(!it[2]||has[id]||albums[id]||!AP.test(it[0]))continue;const p=items[it[1]];if(p&&AP.test(p[0]))continue;const ch=chain(id);if(!ch||ch.length<2)continue;const ai=ch.length-1;const who=artistOf(items,ch,ai);const an=who.name;const pa=parseAlbum(it[0]);albums[id]={id,t:pa.t,y:pa.y||who.y,ar:an?akey(an):null,arn:an,va:who.va,cat:items[ch[0]][0],tr:[],sz:0,empty:true};if(an){const k=akey(an);const R=artists[k]||(artists[k]={k,name:an,al:[],cats:[],va:who.va});R.al.push(id);if(!R.cats.includes(items[ch[0]][0]))R.cats.push(items[ch[0]][0])}}}function sortAlbumTracks(A,tracks){
   tracks=tracks||S.lib.tracks;
   const key=id=>{const t=tracks[id],g=S.tags[id]||{};return[(g.d||t.d||1),(g.n||t.n||999)]};
   A.tr.sort((a,b)=>{const ka=key(a),kb=key(b);return ka[0]-kb[0]||ka[1]-kb[1]||tracks[a].t.localeCompare(tracks[b].t)});
@@ -527,7 +555,7 @@ const P={q:LS.get('np.q',[]),i:LS.get('np.i',-1),shuf:LS.get('np.shuf',false),re
   },
   async load(i,autoplay=true,at=0){
     if(i<0||i>=this.q.length)return;
-    this.i=i;const id=this.q[i];const my=++this.tok;
+    this.i=i;const id=this.q[i];const my=++this.tok;this.wantPlay=autoplay;
     updatePlayerUI();this.save();
     try{
       const u=(P.pre&&P.pre.id===id&&P.pre.u)?P.pre.u:await urlFor(id);if(my!==this.tok)return;
@@ -628,7 +656,7 @@ const MB={running:false,done:0,total:0,cur:'',last:0,stop:false,
   },
   async checkArtist(k){
     const A=S.lib.artists[k];if(!A)return[];
-    const m=S.mb[k]||(S.mb[k]={});if(m.skip)return[];
+    if(A.va)return[];const m=S.mb[k]||(S.mb[k]={});if(m.skip)return[];
     if(!m.mbid){
       const c=await this.search(A.name);m.cands=c.slice(0,6);
       const b=c[0];
@@ -642,7 +670,7 @@ const MB={running:false,done:0,total:0,cur:'',last:0,stop:false,
   async run(force){
     if(this.running||S.demo||!S.lib)return;
     const ivl=S.settings.checkDays*864e5;
-    const keys=S.lib.artistList.map(a=>a.k).filter(k=>{const m=S.mb[k];return !(m&&m.skip)&&(force||!m||!m.checked||Date.now()-m.checked>ivl)});
+    const keys=S.lib.artistList.filter(a=>!a.va).map(a=>a.k).filter(k=>{const m=S.mb[k];return !(m&&m.skip)&&(force||!m||!m.checked||Date.now()-m.checked>ivl)});
     if(!keys.length)return;
     this.running=true;this.stop=false;this.total=keys.length;this.done=0;const found=[];
     const since=daysAgoISO(S.settings.newDays);
@@ -684,7 +712,7 @@ function computeAlerts(){
   if(!S.lib)return res;
   const today=todayISO(),since=daysAgoISO(S.settings.newDays);
   for(const R of S.lib.artistList){
-    const m=S.mb[R.k];if(!m||m.skip)continue;
+    const m=S.mb[R.k];if(!m||m.skip||R.va)continue;
     if(m.nomatch){res.nomatch.push(R);continue}
     if(!m.rgs)continue;res.checked++;
     const albums=R.al.map(id=>S.lib.albums[id]);
@@ -763,7 +791,7 @@ const VIEWS={
     setTitle(R.name,true);
     const m=S.mb[k]||{};const albums=R.al.map(id=>S.lib.albums[id]);
     let mb='';
-    if(S.demo||m.rgs||m.nomatch||m.skip){
+    if(R.va){mb=''}else if(S.demo||m.rgs||m.nomatch||m.skip){
       const miss=(m.rgs||[]).filter(rg=>typeOK(rg)&&rg.d&&!S.ignored[rg.id]&&!haveLocal(rg,albums.filter(a=>a.tr.length))).map(rg=>(rg._p=haveLocal(rg,albums.filter(a=>!a.tr.length)),rg));
       mb=`<div class="card"><h3>Discografía en MusicBrainz</h3>`+
         (m.skip?`<div class="muted small">Este artista no se revisa.</div><div class="btns" style="padding:8px 0 0"><button class="btn sm" data-act="unskip" data-k="${esc(k)}">Volver a revisar</button></div>`:
@@ -1087,6 +1115,8 @@ async function init(){
     if(S.lib)showBanner('Conéctate a Microsoft para reproducir.');else go('#/setup');return;
   }
   if(!S.lib){scanLibrary(true);return}
+  const rp=LS.get('resumePlay',null);
+  if(rp){LS.del('resumePlay');if(P.q.length&&rp.i>=0&&rp.i<P.q.length){P.load(rp.i,false,rp.t||0).then(()=>{if(rp.play)audio.play().catch(()=>toast('Sesión renovada. Toca ▶ para seguir',4000))})}}
   const last=LS.get('lastScan',0);
   if(Date.now()-last>6*3600e3)setTimeout(()=>scanLibrary(false),1500);
   setTimeout(()=>MB.run(false),5000);
